@@ -146,14 +146,14 @@ def test_the_denominator_distinction_is_explained_where_both_appear() -> None:
 
 
 def test_the_menu_is_grouped_by_purpose() -> None:
-    for heading in ("SETUP AND VALIDATION", "ORIGINAL FIVE EXPERIMENTS",
-                    "BFW EXTENSION EXPERIMENTS"):
+    for heading in ("SETUP AND VALIDATION", "EXPERIMENTS AND RESULTS",
+                    "CONTROLLED COMPARISONS"):
         assert heading in acp.MENU_TEXT, heading
 
 
-def test_option_thirteen_is_described_as_experiments_seven_and_eight() -> None:
+def test_combined_run_is_described_as_experiments_seven_and_eight() -> None:
     """It runs Experiments 7 and 8, not every extension experiment."""
-    line = next(l for l in acp.MENU_TEXT.splitlines() if l.strip().startswith("13."))
+    line = next(l for l in acp.MENU_TEXT.splitlines() if l.strip().startswith("23."))
     assert "Experiments 7 and 8" in line
     assert "both extension experiments" not in acp.MENU_TEXT.lower()
 
@@ -337,10 +337,10 @@ def test_the_stored_status_values_are_unchanged() -> None:
 
 @pytest.mark.parametrize(
     ("renderer", "expected"),
-    [("render_baseline_plain_summary", "option 3"),
-     ("render_open_set_plain_summary", "option 8"),
-     ("render_ml_review_plain_summary", "option 10"),
-     ("render_pipeline_plain_summary", "option 12")],
+    [("render_baseline_plain_summary", "option 4"),
+     ("render_open_set_plain_summary", "option 6"),
+     ("render_ml_review_plain_summary", "option 8"),
+     ("render_pipeline_plain_summary", "option 10")],
 )
 def test_a_missing_artefact_gives_an_instruction_not_a_crash(
     tmp_path: Path, renderer: str, expected: str
@@ -460,13 +460,13 @@ def test_the_academic_reports_keep_their_technical_wording(name: str) -> None:
 
 
 def test_both_section_headings_are_produced() -> None:
-    """The plain layer is only useful if it is announced as such."""
+    """Summary and technical details use the same section separators."""
     plain = acp.render_plain_section("body")
     technical = acp.render_technical_section("body")
-    assert "PLAIN-LANGUAGE SUMMARY" in plain
+    assert "# Summary\n" in plain
     assert "TECHNICAL DETAILS" in technical
-    assert plain.startswith("=" * 78)
-    assert technical.startswith("=" * 78)
+    assert plain.startswith("# " + "=" * 77)
+    assert technical.startswith("# " + "=" * 77)
 
 
 def test_the_reference_section_carries_the_overviews_and_glossary() -> None:
@@ -485,14 +485,14 @@ def test_the_reference_section_carries_the_overviews_and_glossary() -> None:
 def test_every_summary_option_prints_all_three_sections(
     action: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Plain language, then technical detail, then reference material - in that
+    """Summary, then technical detail, then reference material - in that
     order, for every option that displays a saved result."""
     getattr(acp, action)(AGG)
     printed = capsys.readouterr().out
-    for heading in ("PLAIN-LANGUAGE SUMMARY", "TECHNICAL DETAILS",
+    for heading in ("# Summary\n", "TECHNICAL DETAILS",
                     "REFERENCE INFORMATION"):
         assert heading in printed, f"{action} omitted {heading}"
-    assert (printed.index("PLAIN-LANGUAGE SUMMARY")
+    assert (printed.index("# Summary\n")
             < printed.index("TECHNICAL DETAILS")
             < printed.index("REFERENCE INFORMATION")), action
     # The glossary must reach every summary, not only the first one.
@@ -602,3 +602,337 @@ def test_the_plain_summaries_match_the_stored_values() -> None:
     coverage = payload["methods"][acp.METHOD_B]["coverage"]
     assert f"{coverage['scored_mated_probes']:,}" in text
     assert f"{coverage['intended_mated_probes']:,}" in text
+
+
+# --- Experiment 9 and the overview table ------------------------------------------
+
+VERIF = AGG / "verification_comparison"
+
+
+def test_the_menu_names_the_models_for_each_experiment_group() -> None:
+    """A reader choosing an option should know what will run before it starts."""
+    text = acp.MENU_TEXT
+    assert "models: YuNet + SFace" in text
+    for phrase in ("YuNet + SFace on BFW",
+                   "YuNet + SFace + logistic regression on BFW",
+                   "Both pipelines on the same BFW identities",
+                   "SCRFD + ArcFace through the same one-to-one chain"):
+        assert phrase in text, phrase
+
+
+def test_the_menu_offers_experiment_nine_and_the_overview() -> None:
+    for option in ("14.", "15.", "16."):
+        assert option in acp.MENU_TEXT, option
+    assert "OVERVIEW" in acp.MENU_TEXT
+
+
+def test_experiment_nine_has_a_preview_wired_to_its_option() -> None:
+    assert acp.MENU_PREVIEW_KEYS.get("12") == "verification-compare"
+    preview = acp.render_experiment_preview("verification-compare")
+    assert "Purpose:" in preview
+    # The whole point is that a threshold is never shared between pipelines.
+    assert "baseline threshold is never reused" in preview
+    assert "No model will be trained or fine-tuned." in preview
+
+
+def test_the_new_modes_are_registered() -> None:
+    for mode in ("verification-compare", "verification-compare-summary",
+                 "experiment-table"):
+        assert mode in acp.MODES, mode
+
+
+def test_experiment_nine_writes_to_its_own_directory() -> None:
+    """Experiments 1-5 must not be overwritten by the comparison chain: both
+    write a file called calibrated_threshold.json."""
+    assert acp.VERIFICATION_COMPARISON_DIRNAME == "verification_comparison"
+    if not VERIF.is_dir():
+        pytest.skip("Experiment 9 has not been run in this checkout")
+    baseline = json.loads((AGG / "calibrated_threshold.json").read_text())
+    compare = json.loads((VERIF / "calibrated_threshold.json").read_text())
+    assert baseline["threshold"] != compare["threshold"], (
+        "each pipeline must calibrate its own threshold"
+    )
+    assert baseline["status"] == compare["status"] == "frozen"
+
+
+def test_experiment_nine_summary_reports_both_pipelines() -> None:
+    if not VERIF.is_dir():
+        pytest.skip("Experiment 9 has not been run")
+    text = acp.render_verification_comparison_summary(AGG)
+    for column in ("LFW: YuNet+SFace", "LFW: SCRFD+ArcFace",
+                   "CPLFW: YuNet+SFace", "CPLFW: SCRFD+ArcFace"):
+        assert column in text, column
+    assert "Frozen threshold" in text
+    assert "not available" not in text
+
+
+def test_a_missing_experiment_nine_gives_an_instruction(tmp_path: Path) -> None:
+    text = acp.render_verification_comparison_summary(tmp_path)
+    assert "not available yet" in text
+    assert "option 12" in text
+
+
+@pytest.mark.parametrize("exp", ["1-2", "3", "4", "5", "6", "7", "8", "9"])
+def test_the_overview_table_covers_every_experiment(exp: str) -> None:
+    text = acp.render_experiment_comparison_table(AGG)
+    rows = [l for l in text.splitlines() if l.strip().startswith(exp + " ")]
+    assert rows, f"experiment {exp} missing from the overview table"
+
+
+def test_the_overview_table_names_models_and_task_for_each_row() -> None:
+    text = acp.render_experiment_comparison_table(AGG)
+    assert "YuNet + SFace" in text and "SCRFD + ArcFace" in text
+    assert "logistic regression" in text
+    # Both task types must be distinguished, never pooled.
+    assert "1:1" in text and "1:N" in text
+    assert "never pooled" in text
+    assert "Only the logistic regression in Experiment 7 is trained" in text
+
+
+def test_the_overview_table_marks_unrun_experiments_rather_than_hiding_them(
+    tmp_path: Path,
+) -> None:
+    """A missing row would read as a gap in the method, not in what was run."""
+    text = acp.render_experiment_comparison_table(tmp_path)
+    assert text.count("not run yet") >= 7
+    for exp in ("1-2", "3", "9"):
+        assert any(l.strip().startswith(exp + " ") for l in text.splitlines()), exp
+
+
+# --- Experiment 11: the classifier on the comparison pipeline ---------------------
+
+ARC_REVIEW = AGG / "arcface_review"
+
+
+def _skip_without_experiment_eleven() -> None:
+    """The directory is created when the run starts, so presence of the
+    directory is not evidence the run finished."""
+    if not (ARC_REVIEW / "ml_review_test_metrics.json").is_file():
+        pytest.skip("Experiment 11 has not completed in this checkout")
+
+
+def test_experiment_eleven_uses_a_separate_run_cache() -> None:
+    """The canonical cache is keyed by partition alone, so a second pipeline
+    sharing the default path would overwrite the baseline runs that
+    Experiments 6 to 10 depend on."""
+    assert acp.ARCFACE_RUN_CACHE != acp.CANONICAL_RUN_CACHE
+    assert acp.ARCFACE_RUN_CACHE.name.startswith("canonical_arcface")
+    baseline = acp.canonical_cache_path("development", acp.CANONICAL_RUN_CACHE)
+    compare = acp.canonical_cache_path("development", acp.ARCFACE_RUN_CACHE)
+    assert baseline != compare
+
+
+def test_experiment_eleven_writes_to_its_own_directory() -> None:
+    assert acp.ARCFACE_REVIEW_DIRNAME == "arcface_review"
+    _skip_without_experiment_eleven()
+    # Both chains write ml_review_test_metrics.json; they must not collide.
+    assert (AGG / "ml_review_test_metrics.json").is_file()
+    assert (ARC_REVIEW / "ml_review_test_metrics.json").is_file()
+
+
+def test_experiment_eleven_artefacts_name_the_right_pipeline() -> None:
+    """primary_pipeline_description reports the OpenCV names unconditionally,
+    so an unguarded run would label these as YuNet + SFace."""
+    _skip_without_experiment_eleven()
+    for name in ("ml_review_test_metrics.json", "ml_review_model.json",
+                 "bfw_open_set_threshold.json"):
+        path = ARC_REVIEW / name
+        if not path.is_file():
+            continue
+        pipeline = json.loads(path.read_text())["pipeline"]
+        assert "arcface" in pipeline["pipeline_name"].lower(), name
+        assert pipeline["embedding_dimensions"] == 512, name
+
+
+def test_experiment_eleven_uses_its_own_comparator_threshold() -> None:
+    """A cutoff calibrated for SFace means nothing in ArcFace's space."""
+    _skip_without_experiment_eleven()
+    baseline = json.loads((AGG / "bfw_open_set_threshold.json").read_text())
+    compare = json.loads((ARC_REVIEW / "bfw_open_set_threshold.json").read_text())
+    target = str(acp.PRIMARY_FPIR_TARGET)
+    assert (baseline["operating_points"][target]["threshold"]
+            != compare["operating_points"][target]["threshold"])
+    assert compare["status"] == acp.OPEN_SET_STATUS_FROZEN
+
+
+def test_experiment_eleven_summary_reports_both_pipelines() -> None:
+    _skip_without_experiment_eleven()
+    text = acp.render_arcface_review_summary(AGG)
+    for column in ("SFace threshold", "SFace + classifier",
+                   "ArcFace threshold", "ArcFace + classifier"):
+        assert column in text, column
+    # The finding is whether the classifier moves the burden the same way.
+    assert "review burden" in text
+    assert "not available" not in text
+
+
+def test_a_missing_experiment_eleven_gives_an_instruction(tmp_path: Path) -> None:
+    text = acp.render_arcface_review_summary(tmp_path)
+    assert "not available yet" in text
+    assert "option 14" in text
+
+
+def test_experiment_eleven_is_wired_to_the_menu() -> None:
+    assert acp.MENU_PREVIEW_KEYS.get("14") == "arcface-review"
+    for mode in ("arcface-review", "arcface-review-summary"):
+        assert mode in acp.MODES, mode
+    preview = acp.render_experiment_preview("arcface-review")
+    assert "separate directory" in preview and "separate run cache" in preview
+
+
+# --- The 1:1 rows are separated by dataset ----------------------------------------
+
+
+def test_the_overview_separates_lfw_from_cplfw() -> None:
+    """Merging them would hide that the coverage difference runs in opposite
+    directions on the two datasets."""
+    text = acp.render_experiment_comparison_table(AGG)
+    nine = next(l for l in text.splitlines() if l.strip().startswith("9 "))
+    ten = next(l for l in text.splitlines() if l.strip().startswith("10 "))
+    assert "LFW" in nine and "CPLFW" not in nine
+    assert "CPLFW" in ten
+    assert "SCRFD + ArcFace" in nine and "SCRFD + ArcFace" in ten
+
+
+def test_the_overview_includes_experiment_eleven() -> None:
+    text = acp.render_experiment_comparison_table(AGG)
+    row = next(l for l in text.splitlines() if l.strip().startswith("11 "))
+    assert "classifier" in row
+
+
+# --- The model comparison table ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "model", ["YuNet", "SFace", "SCRFD", "ArcFace", "Logistic regression"])
+def test_the_model_table_covers_every_model(model: str) -> None:
+    assert model in acp.render_model_comparison_table(AGG), model
+
+
+def test_the_model_table_marks_only_the_classifier_as_trained_here() -> None:
+    text = acp.render_model_comparison_table(AGG)
+    rows = [l for l in text.splitlines()
+            if any(m in l for m in ("YuNet", "SFace", "SCRFD", "ArcFace", "Logistic"))]
+    trained = [l for l in rows if l.rstrip().split()[-2:][0] == "yes"
+               or " yes " in l]
+    assert len(trained) == 1 and "Logistic" in trained[0]
+    assert "Only the logistic regression is fitted by this project" in text
+
+
+def test_the_model_table_reports_measured_cost() -> None:
+    text = acp.render_model_comparison_table(AGG)
+    for label in ("Detection, mean per image", "Embedding, mean per image",
+                  "Complete pipeline, mean per image", "Weight files on disk"):
+        assert label in text, label
+    assert " ms" in text and " MB" in text
+    # A threshold belongs to the model that produced it.
+    assert "never applied to the other" in text
+
+
+# --- Experiment 12: the crossed pipelines ------------------------------------
+
+MIXED = AGG / "mixed_pipelines"
+
+
+def _skip_without_experiment_twelve(crossing: str = "scrfd-sface") -> None:
+    """The directory appears when the run starts, so its presence is not
+    evidence that the crossing finished."""
+    if not (MIXED / crossing / "bfw_open_set_test_metrics.json").is_file():
+        pytest.skip(f"Experiment 12 ({crossing}) has not completed in this checkout")
+
+
+def test_each_crossing_has_its_own_run_cache() -> None:
+    """Sharing a cache base would let one crossing overwrite the scored run of
+    another, or of the baseline the whole study depends on."""
+    paths = {acp.mixed_run_cache(c) for c in acp.MIXED_CROSSINGS}
+    assert len(paths) == len(acp.MIXED_CROSSINGS)
+    assert acp.CANONICAL_RUN_CACHE not in paths
+    assert acp.ARCFACE_RUN_CACHE not in paths
+
+
+def _skip_without_the_comparison_models() -> None:
+    """Describing a crossing re-verifies both model files, so the optional
+    comparison pack must be present for these checks to mean anything."""
+    config = acp.EnvironmentConfig.load()
+    if not acp.arcface_preconditions(config)["ready"]:
+        pytest.skip("The optional comparison models are not installed")
+
+
+def test_the_crossings_are_described_with_the_models_they_actually_use() -> None:
+    """A crossing labelled with the wrong pipeline name would misattribute its
+    result to a pipeline that never produced it."""
+    _skip_without_the_comparison_models()
+    config = acp.EnvironmentConfig.load()
+    scrfd_sface = acp.mixed_pipeline_description("scrfd-sface", config)
+    assert scrfd_sface.embedding_dimensions == acp.EMBEDDING_DIMENSIONS
+    assert "SCRFD" in scrfd_sface.detector_name
+    assert "SFace" in scrfd_sface.embedding_model_name
+
+    yunet_arcface = acp.mixed_pipeline_description("yunet-arcface", config)
+    assert yunet_arcface.embedding_dimensions == 512
+    assert "YuNet" in yunet_arcface.detector_name
+    assert "ArcFace" in yunet_arcface.embedding_model_name
+
+    # The two halves must come from different pipelines, or it is not a crossing.
+    assert scrfd_sface.model_sha256["detector"] != yunet_arcface.model_sha256["detector"]
+    assert scrfd_sface.model_sha256["recognition"] != yunet_arcface.model_sha256["recognition"]
+
+
+def test_an_unknown_crossing_is_refused() -> None:
+    with pytest.raises(ValueError):
+        acp.mixed_pipeline_description("yunet-sface")
+
+
+def test_the_crossed_summary_reports_its_absence_gracefully() -> None:
+    """Every summary must say what to run rather than fail, because the
+    crossings are optional and need the comparison models."""
+    text = acp.render_mixed_pipeline_summary(Path("/nonexistent-results-root"))
+    assert "not available yet" in text
+    assert "mixed-pipelines" in text
+
+
+def test_experiment_twelve_is_wired_into_the_menu() -> None:
+    assert "mixed-pipelines" in acp.MODES
+    assert "mixed-pipelines-summary" in acp.MODES
+    assert acp.MENU_PREVIEW_KEYS["16"] == "mixed-pipelines"
+    assert "mixed-pipelines" in acp.EXPERIMENT_PREVIEWS
+    assert "16. Run Experiment 12" in acp.MENU_TEXT
+    assert "17. Show the saved Experiment 12" in acp.MENU_TEXT
+
+
+def test_experiment_twelve_artefacts_name_the_crossing_that_produced_them() -> None:
+    _skip_without_experiment_twelve()
+    expected = {"scrfd-sface": 128, "yunet-arcface": 512}
+    for crossing, dimensions in expected.items():
+        path = MIXED / crossing / "bfw_open_set_test_metrics.json"
+        if not path.is_file():
+            continue
+        payload = json.loads(path.read_text())
+        assert payload["pipeline"]["pipeline_name"] == f"mixed-{crossing}"
+        assert payload["pipeline"]["embedding_dimensions"] == dimensions
+        assert payload["crossing"] == crossing
+
+
+def test_each_crossing_freezes_a_threshold_of_its_own() -> None:
+    """A threshold belongs to the embedding space that produced it, so no two
+    pipelines may report the same frozen operating point by inheritance."""
+    _skip_without_experiment_twelve()
+    target = str(acp.PRIMARY_FPIR_TARGET)
+    baseline = json.loads((AGG / "bfw_open_set_threshold.json").read_text())
+    baseline_threshold = baseline["operating_points"][target]["threshold"]
+    for crossing in acp.MIXED_CROSSINGS:
+        path = MIXED / crossing / "bfw_open_set_threshold.json"
+        if not path.is_file():
+            continue
+        payload = json.loads(path.read_text())
+        assert payload["status"] == acp.OPEN_SET_STATUS_FROZEN
+        assert payload["operating_points"][target]["threshold"] != baseline_threshold
+
+
+def test_the_crossings_do_not_overwrite_the_baseline_artefacts() -> None:
+    _skip_without_experiment_twelve()
+    baseline = json.loads((AGG / "bfw_open_set_test_metrics.json").read_text())
+    # Experiment 6's own artefact still names the baseline pair, with the
+    # digest keys that pipeline uses.
+    assert baseline["pipeline_name"] == acp.MODEL_VERSION
+    assert set(baseline["model_sha256"]) == {"yunet", "sface"}
